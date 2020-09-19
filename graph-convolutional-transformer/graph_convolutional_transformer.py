@@ -33,21 +33,26 @@ class FeatureEmbedder(object):
     """Init function.
 
     Args:
-      vocab_sizes: A dictionary of vocabularize sizes for each feature.
+      vocab_sizes: A dictionary of vocabulary sizes for each feature.
       feature_keys: A list of feature names you want to use.
       embedding_size: The dimension size of the feature representation vector.
     """
     self._params = {}
     self._feature_keys = feature_keys
     self._vocab_sizes = vocab_sizes
+
+    # [1 x embedding_size]
     dummy_emb = tf.zeros([1, embedding_size], dtype=tf.float32)
 
     for feature_key in feature_keys:
       vocab_size = self._vocab_sizes[feature_key]
+      # [vocab_size x embedding_size]
       emb = tf.get_variable(
           feature_key, shape=(vocab_size, embedding_size), dtype=tf.float32)
+      # [(vocab_size + 1) x embedding_size]
       self._params[feature_key] = tf.concat([emb, dummy_emb], axis=0)
 
+    # [1 x embedding_size]
     self._params['visit'] = tf.get_variable(
         'visit', shape=(1, embedding_size), dtype=tf.float32)
 
@@ -58,33 +63,47 @@ class FeatureEmbedder(object):
     tf.float32.
 
     Args:
-      feature_map: A dictionary of SparseTensors for each feature.
-      max_num_codes: The maximum number of how many feature there can be inside
-        a single visit, per feature. For example, if this is set to 50, then we
-        are assuming there can be up to 50 diagnosis codes, 50 treatment codes,
-        and 50 lab codes. This will be used for creating the prior matrix.
+      feature_map: A dictionary of SparseTensors for each feature, where
+        feature refers to diagnoses, treatment codes and lab results (think
+        EHR node types).
+      max_num_codes: The maximum number of how many features can there be in
+        a single EHR record (visit), per type of EHR node. For example, if this
+        is set to 50, then we are assuming there can be up to 50 diagnosis codes,
+        50 treatment codes, and 50 lab codes. This will be used for creating the 
+        prior matrix.
 
     Returns:
       embeddings: A dictionary of dense representation Tensors for each feature.
       masks: A dictionary of dense float32 Tensors for each feature, that will
         be used as a mask in the downstream tasks.
     """
+    # c x c for c = [diagnoses, treatments, lab results] (features/node types)
     masks = {}
+    # c x c for c = [diagnoses, treatments, lab results] (features/node types)
     embeddings = {}
     for key in self._feature_keys:
+      # [feature_rows x feature_cols x max_num_codes]
       if max_num_codes > 0:
         feature = tf.SparseTensor(
-            indices=feature_map[key].indices,
-            values=feature_map[key].values,
+            indices=feature_map[key].indices, # indices of present values in a SparseTensor
+            values=feature_map[key].values, # present values in a SparseTensor
             dense_shape=[
-                feature_map[key].dense_shape[0],
+                feature_map[key].dense_shape[0], # total size of present and absent values
                 feature_map[key].dense_shape[1], max_num_codes
             ])
       else:
         feature = feature_map[key]
+      # default_value is a ('max value' in) vocab_size, so it falls outside of
+      # vocabulary (and therefore is a special value) if the features are 
+      # encoded using integers in range [0, vocab_size)
       feature_ids = tf.sparse.to_dense(
           feature, default_value=self._vocab_sizes[key])
+      # removes dimensions of size 1 (which is feature_cols)
+      # [feature_rows x max_num_codes] = [EHR_node_types x max_num_codes]
       feature_ids = tf.squeeze(feature_ids, axis=1)
+      # _params contain the [(vocab_size + 1) x embedding_size] tensor for each
+      # EHR node type, the last zero-embedding being the default out-of-vocabulary
+      # value. Embeddings are returned as they are looked up by feature_id.
       embeddings[key] = tf.nn.embedding_lookup(self._params[key], feature_ids)
 
       mask = tf.SparseTensor(
