@@ -114,7 +114,7 @@ class FeatureEmbedder(object):
           dense_shape=feature.dense_shape)
       masks[key] = tf.squeeze(tf.sparse.to_dense(mask), axis=1)
 
-    # vocab_size + 1
+    # vocab_size + 1 (?)
     batch_size = tf.shape(embeddings.values()[0])[0]
 
     # tf.tile(input, multiples) repeats the input multiples times
