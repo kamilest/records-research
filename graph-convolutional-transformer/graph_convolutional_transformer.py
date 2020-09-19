@@ -52,7 +52,8 @@ class FeatureEmbedder(object):
       # [(vocab_size + 1) x embedding_size]
       self._params[feature_key] = tf.concat([emb, dummy_emb], axis=0)
 
-    # [1 x embedding_size]
+    # special visit node: root node of the EHR graph from which all 
+    # deicisons stem; [1 x embedding_size]
     self._params['visit'] = tf.get_variable(
         'visit', shape=(1, embedding_size), dtype=tf.float32)
 
