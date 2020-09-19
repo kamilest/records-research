@@ -104,7 +104,8 @@ class FeatureEmbedder(object):
       feature_ids = tf.squeeze(feature_ids, axis=1)
       # _params contain the [(vocab_size + 1) x embedding_size] tensor for each
       # EHR node type, the last zero-embedding being the default out-of-vocabulary
-      # value. Embeddings are returned as they are looked up by feature_id.
+      # value.
+      # here embeddings are retrieved for each of the numbered features
       embeddings[key] = tf.nn.embedding_lookup(self._params[key], feature_ids)
 
       mask = tf.SparseTensor(
@@ -113,7 +114,12 @@ class FeatureEmbedder(object):
           dense_shape=feature.dense_shape)
       masks[key] = tf.squeeze(tf.sparse.to_dense(mask), axis=1)
 
+    # vocab_size + 1
     batch_size = tf.shape(embeddings.values()[0])[0]
+
+    # tf.tile(input, multiples) repeats the input multiples times
+    # for dimension i, replicates i-th dimension of input multiples[i] times
+    # here replicates the visit node batch_size number of times
     embeddings['visit'] = tf.tile(self._params['visit'][None, :, :],
                                   [batch_size, 1, 1])
 
