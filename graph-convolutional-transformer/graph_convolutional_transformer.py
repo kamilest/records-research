@@ -188,7 +188,9 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
     self._layers['ffn'] = []
     self._layers['head_agg'] = []
 
+    # number of Transformer blocks
     for i in range(self._num_stack):
+      # outputs [input_size x embedding_size * num_attention_heads]
       self._layers['Q'].append(
           tf.keras.layers.Dense(
               self._hidden_size * self._num_heads, use_bias=False))
@@ -210,6 +212,7 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
             tf.keras.layers.Dense(self._hidden_size, activation='relu'))
       self._layers['ffn'][i].append(tf.keras.layers.Dense(self._hidden_size))
 
+  # The MLP(.) operation of the GCT
   def feedforward(self, features, stack_index, training=None):
     """Feedforward component of Transformer.
 
@@ -229,6 +232,7 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
 
     return features
 
+  # Multiplies Q^{(j)}K^{(j)T}, applies softmax in GCT
   def qk_op(self,
             features,
             stack_index,
@@ -258,6 +262,10 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
       The attention distribution derived from the QK operation.
     """
 
+    # Applies Dense layer with (embedding_size * num_attention_heads) hidden units
+    # [batch_size x num_features x embedding_size]
+    # reshaped into [batch_size x num_codes x embedding_size x num_attention_heads]
+    # (separates the Dense layer into separate dimensions??)
     q = self._layers['Q'][stack_index](features)
     q = tf.reshape(q,
                    [batch_size, num_codes, self._hidden_size, self._num_heads])
@@ -267,11 +275,19 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
                    [batch_size, num_codes, self._hidden_size, self._num_heads])
 
     # Need to transpose q and k to (2, 0, 1)
+    # Q transposed to [batch_size x num_attention_heads x num_codes x embedding_size]
+    # K transposed to [batch_size x num_attention_heads x embedding_size x num_codes]
+    # K is transposed in equation, so the last two dimensions switched
     q = tf.transpose(q, perm=[0, 3, 1, 2])
     k = tf.transpose(k, perm=[0, 3, 2, 1])
+    
+    # Divides by 'column size' of K^{(j)}
     pre_softmax = tf.matmul(q, k) / tf.sqrt(
         tf.cast(self._hidden_size, tf.float32))
 
+    # \hat{A} matrix, with applied attention mask
+    # infinities in the mask probably result in zero probabilities when softmax
+    # is applied
     pre_softmax -= attention_mask[:, None, None, :]
 
     if inf_mask is not None:
@@ -309,6 +325,8 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
         used later to regularize the self-attention process.
     """
 
+    # features is the input embedding to GCT of dimensions
+    # [batch_size x num_features x embedding_size]
     batch_size = tf.shape(features)[0]
     num_codes = tf.shape(features)[1]
 
@@ -317,12 +335,14 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
     # the shape (batch_size, num_codes, 1), so we remove the last dimension
     # during the process.
     mask_idx = tf.cast(tf.where(tf.equal(masks[:, :, 0], 0.)), tf.int32)
+    # [c x c] ~ [batch_size x num_features x num_features]
     mask_matrix = tf.fill([tf.shape(mask_idx)[0]], tf.float32.max)
     attention_mask = tf.scatter_nd(
         indices=mask_idx, updates=mask_matrix, shape=tf.shape(masks[:, :, 0]))
 
     inf_mask = None
     if self._use_inf_mask:
+      # [c x c] ~ [batch_size x num_features x num_features]
       guide_idx = tf.cast(tf.where(tf.equal(guide, 0.)), tf.int32)
       inf_matrix = tf.fill([tf.shape(guide_idx)[0]], tf.float32.max)
       inf_mask = tf.scatter_nd(
