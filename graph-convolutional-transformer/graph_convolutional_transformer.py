@@ -78,34 +78,25 @@ class FeatureEmbedder(object):
       masks: A dictionary of dense float32 Tensors for each feature, that will
         be used as a mask in the downstream tasks.
     """
-    # c x c for c = [diagnoses, treatments, lab results] (features/node types)
+
     masks = {}
-    # c x c for c = [diagnoses, treatments, lab results] (features/node types)
     embeddings = {}
     for key in self._feature_keys:
-      # [feature_rows x feature_cols x max_num_codes]
       if max_num_codes > 0:
         feature = tf.SparseTensor(
-            indices=feature_map[key].indices, # indices of present values in a SparseTensor
-            values=feature_map[key].values, # present values in a SparseTensor
+            indices=feature_map[key].indices,
+            values=feature_map[key].values,
             dense_shape=[
-                feature_map[key].dense_shape[0], # total size of present and absent values
+                feature_map[key].dense_shape[0],
                 feature_map[key].dense_shape[1], max_num_codes
             ])
       else:
         feature = feature_map[key]
-      # default_value is a ('max value' in) vocab_size, so it falls outside of
-      # vocabulary (and therefore is a special value) if the features are 
-      # encoded using integers in range [0, vocab_size)
+
       feature_ids = tf.sparse.to_dense(
           feature, default_value=self._vocab_sizes[key])
-      # removes dimensions of size 1 (which is feature_cols)
-      # [feature_rows x max_num_codes] = [EHR_node_types x max_num_codes]
       feature_ids = tf.squeeze(feature_ids, axis=1)
-      # _params contain the [(vocab_size + 1) x embedding_size] tensor for each
-      # EHR node type, the last zero-embedding being the default out-of-vocabulary
-      # value.
-      # here embeddings are retrieved for each of the numbered features
+
       embeddings[key] = tf.nn.embedding_lookup(self._params[key], feature_ids)
 
       mask = tf.SparseTensor(
@@ -114,7 +105,6 @@ class FeatureEmbedder(object):
           dense_shape=feature.dense_shape)
       masks[key] = tf.squeeze(tf.sparse.to_dense(mask), axis=1)
 
-    # vocab_size + 1 (?)
     batch_size = tf.shape(embeddings.values()[0])[0]
 
     # tf.tile(input, multiples) repeats the input multiples times
@@ -188,9 +178,7 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
     self._layers['ffn'] = []
     self._layers['head_agg'] = []
 
-    # number of Transformer blocks
     for i in range(self._num_stack):
-      # outputs [input_size x embedding_size * num_attention_heads]
       self._layers['Q'].append(
           tf.keras.layers.Dense(
               self._hidden_size * self._num_heads, use_bias=False))
@@ -212,7 +200,6 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
             tf.keras.layers.Dense(self._hidden_size, activation='relu'))
       self._layers['ffn'][i].append(tf.keras.layers.Dense(self._hidden_size))
 
-  # The MLP(.) operation of the GCT
   def feedforward(self, features, stack_index, training=None):
     """Feedforward component of Transformer.
 
@@ -232,7 +219,6 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
 
     return features
 
-  # Multiplies Q^{(j)}K^{(j)T}, applies softmax in GCT
   def qk_op(self,
             features,
             stack_index,
@@ -265,7 +251,6 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
     # Applies Dense layer with (embedding_size * num_attention_heads) hidden units
     # [batch_size x num_features x embedding_size]
     # reshaped into [batch_size x num_codes x embedding_size x num_attention_heads]
-    # (separates the Dense layer into separate dimensions??)
     q = self._layers['Q'][stack_index](features)
     q = tf.reshape(q,
                    [batch_size, num_codes, self._hidden_size, self._num_heads])
@@ -286,7 +271,7 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
         tf.cast(self._hidden_size, tf.float32))
 
     # \hat{A} matrix, with applied attention mask
-    # infinities in the mask probably result in zero probabilities when softmax
+    # infinities in the mask result in zero probabilities when softmax
     # is applied
     pre_softmax -= attention_mask[:, None, None, :]
 
@@ -325,8 +310,6 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
         used later to regularize the self-attention process.
     """
 
-    # features is the input embedding to GCT of dimensions
-    # [batch_size x num_features x embedding_size]
     batch_size = tf.shape(features)[0]
     num_codes = tf.shape(features)[1]
 
@@ -335,14 +318,12 @@ class GraphConvolutionalTransformer(tf.keras.layers.Layer):
     # the shape (batch_size, num_codes, 1), so we remove the last dimension
     # during the process.
     mask_idx = tf.cast(tf.where(tf.equal(masks[:, :, 0], 0.)), tf.int32)
-    # [c x c] ~ [batch_size x num_features x num_features]
     mask_matrix = tf.fill([tf.shape(mask_idx)[0]], tf.float32.max)
     attention_mask = tf.scatter_nd(
         indices=mask_idx, updates=mask_matrix, shape=tf.shape(masks[:, :, 0]))
 
     inf_mask = None
     if self._use_inf_mask:
-      # [c x c] ~ [batch_size x num_features x num_features]
       guide_idx = tf.cast(tf.where(tf.equal(guide, 0.)), tf.int32)
       inf_matrix = tf.fill([tf.shape(guide_idx)[0]], tf.float32.max)
       inf_mask = tf.scatter_nd(
